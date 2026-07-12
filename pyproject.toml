@@ -6,9 +6,16 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "langchain-chroma>=1.1.0",
+    "langchain-core>=1.4.8",
     "langchain-groq>=1.1.3",
+    "langchain-huggingface>=1.2.2",
+    "langchain-text-splitters>=1.1.2",
     "numpy<2.5",
+    "openai-whisper>=20250625",
     "pydub>=0.25.1",
+    "python-dotenv>=1.2.2",
+    "sentence-transformers>=5.6.0",
+    "streamlit>=1.59.1",
     "tokenizers>=0.22.0,<=0.23.0",
     "yt-dlp>=2026.7.4",
 ]
