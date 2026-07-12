@@ -16,7 +16,9 @@ sessions_index.json
 chroma_db/
 
 sessions/
+sessions_data
 
 *.mp3
 *.wav
+*.pyc
 *.mp4
