@@ -5,25 +5,37 @@ import os
 DOWNLOAD_DIR = 'downloades'
 os.makedirs(DOWNLOAD_DIR,exist_ok = True)
 
-def download_youtube_audio(url :str) ->str:
+def download_youtube_audio(url: str) -> str:
+    print("=" * 60)
+    print("Downloading:", url)
+
     output_path = os.path.join(DOWNLOAD_DIR, "%(title)s.%(ext)s")
+
     ydl_opts = {
         "format": "bestaudio/best",
         "outtmpl": output_path,
-        "postprocessors": [
-            {
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "wav",
-                "preferredquality": "192",
-            }
-        ],
+        "postprocessors": [{
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "wav",
+            "preferredquality": "192",
+        }],
         "quiet": False,
         "noplaylist": True,
     }
+
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
+
+        print("Video title:", info["title"])
+
         filename = ydl.prepare_filename(info)
+        print("Original filename:", filename)
+
         filename = os.path.splitext(filename)[0] + ".wav"
+
+        print("Expected wav:", filename)
+        print("Exists:", os.path.exists(filename))
+
     return filename
 
 
