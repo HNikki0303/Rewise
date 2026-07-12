@@ -1,4 +1,5 @@
 import streamlit as st
+import traceback
 from dotenv import load_dotenv
 
 from utils.audio_processor import process_input
@@ -6,117 +7,15 @@ from core.transcriber import transcribe_all
 from core.extractor import extract_action_items, extract_key_decisions, extract_questions
 from core.summarizer import summarize, generate_title
 from core.rag import build_rag_chain, load_rag_chain, ask_question
-from core.session_manager import create_session, list_sessions
+from core.session_manager import create_session, list_sessions, save_session_data, load_session_data
 
 load_dotenv()
 
 st.set_page_config(page_title="Rewise", page_icon="🎧", layout="wide")
-st.markdown("""
-<style>
-
-/* Background */
-.stApp{
-    background-color:#1D2128;
-}
-
-/* Main block */
-.main .block-container{
-    padding-top:2rem;
-    padding-bottom:2rem;
-    max-width:1200px;
-}
-
-/* Headings */
-h1,h2,h3,h4{
-    color:#F4F2F2 !important;
-}
-
-/* Paragraphs */
-p,label,span{
-    color:#F4F2F2 !important;
-}
-
-/* Sidebar */
-[data-testid="stSidebar"]{
-    background:#215E61;
-}
-
-[data-testid="stSidebar"] *{
-    color:white !important;
-}
-
-/* Buttons */
-.stButton>button{
-    background:#FF9E20;
-    color:white;
-    border:none;
-    border-radius:12px;
-    font-weight:600;
-    transition:0.3s;
-}
-
-.stButton>button:hover{
-    background:#e38b12;
-}
-
-/* Tabs */
-.stTabs [role="tab"]{
-    background:#2a3039;
-    color:white;
-    border-radius:8px;
-}
-
-.stTabs [aria-selected="true"]{
-    background:#215E61 !important;
-}
-
-/* Chat messages */
-
-[data-testid="stChatMessage"]{
-    background:#2b3139;
-    border-radius:15px;
-    padding:15px;
-    margin-bottom:12px;
-    border-left:5px solid #FF9E20;
-}
-
-/* Chat input */
-
-[data-testid="stChatInput"]{
-    background:#2b3139;
-}
-
-/* Text input */
-
-.stTextInput input{
-    border-radius:10px;
-    border:2px solid #215E61;
-}
-
-/* Transcript */
-
-textarea{
-    border-radius:10px !important;
-}
-
-/* Info boxes */
-
-[data-testid="stAlert"]{
-    border-radius:12px;
-}
-
-/* Divider */
-
-hr{
-    border-color:#215E61;
-}
-
-</style>
-""", unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------------
-# Core pipeline — registers a session so it can be revisited later
+# Core pipeline — registers a session and saves everything about it to disk
 # ---------------------------------------------------------------------------
 
 def run_pipeline(source: str) -> dict:
@@ -131,7 +30,7 @@ def run_pipeline(source: str) -> dict:
     session_id = create_session(title)
     rag_chain = build_rag_chain(transcript, session_id)
 
-    return {
+    result = {
         "session_id": session_id,
         "title": title,
         "transcript": transcript,
@@ -139,8 +38,22 @@ def run_pipeline(source: str) -> dict:
         "action_items": action_items,
         "key_decisions": key_decisions,
         "open_questions": questions,
-        "rag_chain": rag_chain,
     }
+
+    save_session_data(session_id, {**result, "chat_history": []})
+
+    result["rag_chain"] = rag_chain
+    return result
+
+
+def persist_chat_history():
+    """Write the current chat history back to disk for the active session."""
+    session_id = st.session_state.active_session_id
+    if not session_id:
+        return
+    existing = load_session_data(session_id) or {}
+    existing["chat_history"] = st.session_state.chat_history
+    save_session_data(session_id, existing)
 
 
 # ---------------------------------------------------------------------------
@@ -152,7 +65,7 @@ if "result" not in st.session_state:
 if "rag_chain" not in st.session_state:
     st.session_state.rag_chain = None
 if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []  # list of (role, text) tuples
+    st.session_state.chat_history = []  # list of [role, text] pairs
 if "active_session_id" not in st.session_state:
     st.session_state.active_session_id = None
 if "processing" not in st.session_state:
@@ -161,6 +74,8 @@ if "pending_source" not in st.session_state:
     st.session_state.pending_source = ""
 if "source_input" not in st.session_state:
     st.session_state.source_input = ""
+if "last_error" not in st.session_state:
+    st.session_state.last_error = None
 
 
 # ---------------------------------------------------------------------------
@@ -180,10 +95,12 @@ def start_processing():
 
 
 def load_past_session(session_id: str):
+    data = load_session_data(session_id)
     rag_chain = load_rag_chain(session_id)
-    st.session_state.result = None  # summary/items aren't re-fetched, only chat
+
+    st.session_state.result = data  # restores transcript/summary/action items/etc, or None if missing
     st.session_state.rag_chain = rag_chain
-    st.session_state.chat_history = []
+    st.session_state.chat_history = (data or {}).get("chat_history", [])
     st.session_state.active_session_id = session_id
     st.session_state.source_input = ""  # clear any half-typed URL
 
@@ -241,7 +158,12 @@ with st.sidebar:
             )
 
     st.divider()
-    
+    if st.session_state.rag_chain is not None:
+        st.button(
+            "🛑 End conversation",
+            use_container_width=True,
+            on_click=end_conversation,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -257,12 +179,30 @@ if st.session_state.processing and st.session_state.pending_source:
             st.session_state.rag_chain = result["rag_chain"]
             st.session_state.chat_history = []
             st.session_state.active_session_id = result["session_id"]
+            st.session_state.last_error = None
         except Exception as e:
-            st.error(f"Something went wrong: {e}")
+            st.session_state.last_error = {
+                "message": str(e),
+                "traceback": traceback.format_exc(),
+            }
         finally:
             st.session_state.processing = False
             st.session_state.pending_source = ""
     st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# Persistent error banner — stays visible across reruns until dismissed,
+# instead of vanishing the instant st.rerun() fires.
+# ---------------------------------------------------------------------------
+
+if st.session_state.last_error:
+    st.error(f"Something went wrong: {st.session_state.last_error['message']}")
+    with st.expander("Show full error details"):
+        st.code(st.session_state.last_error["traceback"], language="text")
+    if st.button("Dismiss"):
+        st.session_state.last_error = None
+        st.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -272,37 +212,14 @@ if st.session_state.processing and st.session_state.pending_source:
 result = st.session_state.result
 
 if result:
-    st.markdown(f"""
-    <h1 style="
-    color:#FF9E20;
-    margin-bottom:0px;">
-    🎧 {result['title']}
-    </h1>
-
-    <p style="
-    color:#BFC6C7;
-    margin-top:0px;">
-    AI Meeting & Lecture Assistant
-    </p>
-    """, unsafe_allow_html=True)
+    st.header(f"📌 {result['title']}")
 
     tab_summary, tab_actions, tab_decisions, tab_questions, tab_transcript = st.tabs(
         ["Summary", "Action Items", "Key Decisions", "Open Questions", "Full Transcript"]
     )
 
     with tab_summary:
-        st.markdown(f"""
-    <div style="
-    background:#2b3139;
-    padding:20px;
-    border-radius:15px;
-    border-left:6px solid #FF9E20;
-    color:white;
-    font-size:17px;
-    line-height:1.8;">
-    {result["summary"]}
-    </div>
-    """, unsafe_allow_html=True)
+        st.write(result["summary"])
 
     with tab_actions:
         st.write(result["action_items"])
@@ -319,7 +236,7 @@ if result:
     st.divider()
 
 elif st.session_state.rag_chain is not None:
-    st.info("Resumed a past session — summary/action items aren't reloaded, but you can chat below.")
+    st.info("This session has no saved summary data (it may predate this feature) — you can still chat below.")
 
 
 # ---------------------------------------------------------------------------
@@ -336,7 +253,7 @@ if st.session_state.rag_chain is not None:
     question = st.chat_input("Ask something about this recording...")
 
     if question:
-        st.session_state.chat_history.append(("user", question))
+        st.session_state.chat_history.append(["user", question])
         with st.chat_message("user"):
             st.write(question)
 
@@ -345,27 +262,8 @@ if st.session_state.rag_chain is not None:
                 answer = ask_question(st.session_state.rag_chain, question)
                 st.write(answer)
 
-        st.session_state.chat_history.append(("assistant", answer))
+        st.session_state.chat_history.append(["assistant", answer])
+        persist_chat_history()
 
 else:
-    st.markdown("""
-# 🎧 Rewise
-
-### Your AI Meeting & Lecture Assistant
-
-Upload a recording or paste a YouTube link to:
-
-✅ Generate concise summaries
-
-✅ Extract action items
-
-✅ Identify key decisions
-
-✅ List open questions
-
-✅ Chat with your recording using AI
-
----
-
-Start by entering a YouTube URL in the sidebar.
-""")
+    st.write("👈 Process a new recording or pick a past one from the sidebar to get started.")
