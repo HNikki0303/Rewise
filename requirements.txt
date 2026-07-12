@@ -1,0 +1,44 @@
+# AI Meeting Assistant
+# Recommended Python: 3.12.x
+
+# ---------------- Audio / Video ----------------
+yt-dlp
+pydub
+ffmpeg-python
+
+# ---------------- Speech-to-Text ----------------
+torch
+torchaudio
+
+# ---------------- Translation ----------------
+deep-translator
+
+# ---------------- LangChain + Mistral ----------------
+langchain
+langchain-core
+langchain-community
+langchain-mistralai
+mistralai
+langchain-groq
+
+# ---------------- RAG ----------------
+chromadb
+sentence-transformers
+langchain-huggingface
+huggingface-hub
+tiktoken
+
+# ---------------- Streamlit ----------------
+streamlit
+streamlit-extras
+watchdog
+
+# ---------------- PDF ----------------
+reportlab
+fpdf2
+
+# ---------------- Utilities ----------------
+python-dotenv
+numpy
+tqdm
+requests
